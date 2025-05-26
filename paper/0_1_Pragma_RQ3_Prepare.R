@@ -18,7 +18,7 @@ library(data.table)
 # Load settings
 
 rm(list = ls())
-setwd("/Users/carolinkilian/Desktop/Pragma/")
+#setwd("/Users/carolinkilian/Desktop/Pragma/")
 
 # Load data
 

@@ -17,6 +17,7 @@ library(Hmisc)
 library(pscl)
 #library(parameters) # p values for zero-inflated models
 library(boot)
+library(data.table)
 
 # Load settings
 
@@ -28,42 +29,87 @@ rm(list = ls())
 match.data <- readRDS("Data/preprocessed data/2024-10-10_RQ3_AllDat_Matched.RDS")
 
 # Functions
-
-wtd.lci <- function(x, w) {
-  n    <- length(x)
-  mean <- wtd.mean(x, w)
-  sd   <- sqrt(wtd.var(x, w))
-  se   <- sd/sqrt(length(x))
-  lci   <- mean + qt(0.025,n-1)*se 
-  return(lci)
-}
-
-lci <- function(x) {
+lci <- function(x, dist = "continuous") {
   n    <- length(x)
   mean <- mean(x)
-  sd   <- sqrt(var(x))
-  se   <- sd/sqrt(length(x))
-  lci   <- mean + qt(0.025,n-1)*se 
+  
+  if (dist == "continuous") {
+    sd  <- sqrt(var(x))
+    se  <- sd/sqrt(n)
+    lci <- mean + qt(0.025, n - 1) * se  # t-distribution for continuous
+  } else if (dist == "binomial") {
+    p   <- mean
+    se  <- sqrt(p * (1 - p) / n)
+    lci <- p + qnorm(0.025) * se         # Normal approximation for binomial
+  } else {
+    stop("dist must be 'continuous' or 'binomial'")
+  }
+  
   return(lci)
 }
-
-wtd.uci <- function(x, w) {
+uci <- function(x, dist = "continuous") {
   n    <- length(x)
-  mean <- wtd.mean(x, w)
-  sd   <- sqrt(wtd.var(x, w))
-  se   <- sd/sqrt(length(x))
-  uci   <- mean + qt(0.975,n-1)*se 
+  mean <- mean(x)
+  
+  if (dist == "continuous") {
+    sd  <- sqrt(var(x))
+    se  <- sd/sqrt(n)
+    uci <- mean + qt(0.975, n - 1) * se  # t-distribution for continuous
+  } else if (dist == "binomial") {
+    p   <- mean
+    se  <- sqrt(p * (1 - p) / n)
+    uci <- p + qnorm(0.975) * se         # Normal approximation for binomial
+  } else {
+    stop("dist must be 'continuous' or 'binomial'")
+  }
+  
   return(uci)
 }
 
-uci <- function(x) {
-  n    <- length(x)
-  mean <- mean(x)
-  sd   <- sqrt(var(x))
-  se   <- sd/sqrt(length(x))
-  lci   <- mean + qt(0.975,n-1)*se 
+
+wtd.lci <- function(x, w, dist = "continuous") {
+  # Handle missing weights
+  if (missing(w)) w <- rep(1, length(x))
+  
+  if (dist == "continuous") {
+    mean <- Hmisc::wtd.mean(x, w)
+    var <- Hmisc::wtd.var(x, w)
+    se <- sqrt(var)/sqrt(length(x))
+    lci <- mean + qt(0.025, length(x)-1)*se
+  } else if (dist == "binomial") {
+    # Validate binary input
+    if (!all(x %in% c(0,1))) stop("For binomial distribution, x must be 0/1 vector")
+    p <- Hmisc::wtd.mean(x, w)
+    n_eff <- sum(w)  # Effective sample size
+    se <- sqrt(p*(1-p)/n_eff)
+    lci <- p + qnorm(0.025)*se
+  } else {
+    stop("dist must be 'continuous' or 'binomial'")
+  }
   return(lci)
 }
+wtd.uci <- function(x, w, dist = "continuous") {
+  # Handle missing weights
+  if (missing(w)) w <- rep(1, length(x))
+  
+  if (dist == "continuous") {
+    mean <- Hmisc::wtd.mean(x, w)
+    var <- Hmisc::wtd.var(x, w)
+    se <- sqrt(var)/sqrt(length(x))
+    uci <- mean + qt(0.975, length(x)-1)*se
+  } else if (dist == "binomial") {
+    # Validate binary input
+    if (!all(x %in% c(0,1))) stop("For binomial distribution, x must be 0/1 vector")
+    p <- Hmisc::wtd.mean(x, w)
+    n_eff <- sum(w)  # Effective sample size
+    se <- sqrt(p*(1-p)/n_eff)
+    uci <- p + qnorm(0.975)*se
+  } else {
+    stop("dist must be 'continuous' or 'binomial'")
+  }
+  return(uci)
+}
+
 
 # Layout for visualizations
 
@@ -89,59 +135,33 @@ data <- match.data %>%
          aud2018 = ifelse(y.aud == 2018, 1, 0),
          aud2019 = ifelse(y.aud == 2019, 1, 0),
          aud2020 = ifelse(y.aud == 2020, 1, 0),
-         treat = factor(treat, levels=c("qwt","inpat","reha")),
+         treat = factor(treat, levels=c("inpat","qwt","reha")),
          hosp.FU.AUD.days = as.integer(hosp.FU.AUD.days),
          hosp.FU.days = as.integer(hosp.FU.days),
          inpat = factor(ifelse(inpat_num <= 1, "0/1 inpat", 
                                ifelse(inpat_num > 1, "2+ inpat", NA))),
          inpat2 = as.numeric(ifelse(inpat_num <= 1, 0, 
-                                    ifelse(inpat_num > 1, 1, NA)))) 
+                                    ifelse(inpat_num > 1, 1, NA))))
+
+dt <- data.table(data)
 
 ## ----------------------------------------------------------------
 ## DESCRIPTIVES
 ## ----------------------------------------------------------------
 
-wdesc <- data %>%
-  group_by(treat) %>%
-  summarise(age.aud.mean = wtd.mean(age.aud, weights), age.aud.std = sqrt(wtd.var(age.aud, weights)),
-            sex.prop = wtd.mean(sex, weights), sex.lci = wtd.lci(sex, weights), sex.uci = wtd.uci(sex, weights),
-            employed.prop = wtd.mean(emp.employed, weights), employed.lci = wtd.lci(emp.employed, weights), employed.uci = wtd.uci(emp.employed, weights),
-            unemployed.prop = wtd.mean(emp.unemployed, weights), unemployed.lci = wtd.lci(emp.unemployed, weights), unemployed.uci = wtd.uci(emp.unemployed, weights),
-            emp.oth.prop = wtd.mean(emp.other, weights), emp.oth.lci = wtd.lci(emp.other, weights), emp.oth.uci = wtd.uci(emp.other, weights),
-            aud2017.prop = wtd.mean(aud2017, weights), aud2017.lci = wtd.lci(aud2017, weights), aud2017.uci = wtd.uci(aud2017, weights),
-            aud2018.prop = wtd.mean(aud2018, weights), aud2018.lci = wtd.lci(aud2018, weights), aud2018.uci = wtd.uci(aud2018, weights),
-            aud2019.prop = wtd.mean(aud2019, weights), aud2019.lci = wtd.lci(aud2019, weights), aud2019.uci = wtd.uci(aud2019, weights),
-            aud2020.prop = wtd.mean(aud2020, weights), aud2020.lci = wtd.lci(aud2020, weights), aud2020.uci = wtd.uci(aud2020, weights),
-            Elix30PRE.median = wtd.quantile(Elix30PRE, weights, probs = 0.5), 
-            Elix30PRE.q1 = wtd.quantile(Elix30PRE, weights, probs = 0.25), Elix30PRE.q3 = wtd.quantile(Elix30PRE, weights, probs = 0.75),
-            time.aud.treat.median = wtd.quantile(time.aud.treat, weights, probs = 0.5), 
-            time.aud.treat.q1 = wtd.quantile(time.aud.treat, weights, probs = 0.25), time.aud.treat.q3 = wtd.quantile(time.aud.treat, weights, probs = 0.75),
-            time.qwt.median = wtd.quantile(time.qwt, weights, probs = 0.5), 
-            time.qwt.q1 = wtd.quantile(time.qwt, weights, probs = 0.25), time.qwt.q3 = wtd.quantile(time.qwt, weights, probs = 0.75),
-            time.treat.median = wtd.quantile(time.treat, weights, probs = 0.5), 
-            time.treat.q1 = wtd.quantile(time.treat, weights, probs = 0.25), time.treat.q3 = wtd.quantile(time.treat, weights, probs = 0.75),
-            inpat.prop = wtd.mean(inpat2, weights), inpat.lci = wtd.lci(inpat2, weights), inpat.uci = wtd.uci(inpat2, weights),
-            hosp.FU.times.median = wtd.quantile(hosp.FU.times, weights, probs = 0.5), 
-            hosp.FU.times.q1 = wtd.quantile(hosp.FU.times, weights, probs = 0.25), hosp.FU.times.q3 = wtd.quantile(hosp.FU.times, weights, probs = 0.75),
-            hosp.FU.days.median = wtd.quantile(hosp.FU.days, weights, probs = 0.5), 
-            hosp.FU.days.q1 = wtd.quantile(hosp.FU.days, weights, probs = 0.25), hosp.FU.days.q3 = wtd.quantile(hosp.FU.days, weights, probs = 0.75),
-            hosp.FU.AUD.times.median = wtd.quantile(hosp.FU.AUD.times, weights, probs = 0.5), 
-            hosp.FU.AUD.times.q1 = wtd.quantile(hosp.FU.AUD.times, weights, probs = 0.25), hosp.FU.AUD.times.q3 = wtd.quantile(hosp.FU.AUD.times, weights, probs = 0.75),
-            hosp.FU.AUD.days.median = wtd.quantile(hosp.FU.AUD.days, weights, probs = 0.5), 
-            hosp.FU.AUD.days.q1 = wtd.quantile(hosp.FU.AUD.days, weights, probs = 0.25), hosp.FU.AUD.days.q3 = wtd.quantile(hosp.FU.AUD.days, weights, probs = 0.75)) %>%
-  t %>% as.data.frame() %>% row_to_names(1) %>% `colnames<-`(c("QWT", "INPAT", "Reha"))
+##  TABLE 1 (unweighted)
 
 desc <- data %>%
   group_by(treat) %>%
   summarise(age.aud.mean = mean(age.aud), age.aud.std = sqrt(var(age.aud)),
-            sex.prop = mean(sex), sex.lci = lci(sex), sex.uci = uci(sex),
-            employed.prop = mean(emp.employed), employed.lci = lci(emp.employed), employed.uci = uci(emp.employed),
-            unemployed.prop = mean(emp.unemployed), unemployed.lci = lci(emp.unemployed), unemployed.uci = uci(emp.unemployed),
-            emp.oth.prop = mean(emp.other), emp.oth.lci = lci(emp.other), emp.oth.uci = uci(emp.other),
-            aud2017.prop = mean(aud2017), aud2017.lci = lci(aud2017), aud2017.uci = uci(aud2017),
-            aud2018.prop = mean(aud2018), aud2018.lci = lci(aud2018), aud2018.uci = uci(aud2018),
-            aud2019.prop = mean(aud2019), aud2019.lci = lci(aud2019), aud2019.uci = uci(aud2019),
-            aud2020.prop = mean(aud2020), aud2020.lci = lci(aud2020), aud2020.uci = uci(aud2020),
+            sex.prop = mean(sex), sex.n = sum(sex), 
+            employed.prop = mean(emp.employed), employed.n = sum(emp.employed),
+            unemployed.prop = mean(emp.unemployed), unemployed.n = sum(emp.unemployed),
+            emp.oth.prop = mean(emp.other), emp.oth.n = sum(emp.other),
+            aud2017.prop = mean(aud2017), aud2017.n = sum(aud2017),
+            aud2018.prop = mean(aud2018), aud2018.n = sum(aud2018),
+            aud2019.prop = mean(aud2019), aud2019.n = sum(aud2019),
+            aud2020.prop = mean(aud2020), aud2020.n = sum(aud2020),
             Elix30PRE.median = quantile(Elix30PRE, probs = 0.5), 
             Elix30PRE.q1 = quantile(Elix30PRE, probs = 0.25), Elix30PRE.q3 = quantile(Elix30PRE, probs = 0.75),
             time.aud.treat.median = quantile(time.aud.treat, probs = 0.5), 
@@ -150,7 +170,7 @@ desc <- data %>%
             time.qwt.q1 = quantile(time.qwt, probs = 0.25), time.qwt.q3 = quantile(time.qwt, probs = 0.75),
             time.treat.median = quantile(time.treat, probs = 0.5), 
             time.treat.q1 = quantile(time.treat, probs = 0.25), time.treat.q3 = quantile(time.treat, probs = 0.75),
-            inpat.prop = mean(inpat2), inpat.lci = lci(inpat2), inpat.uci = uci(inpat2),
+            inpat.prop = mean(inpat2), inpat.n = sum(inpat2),
             hosp.FU.times.median = quantile(hosp.FU.times, probs = 0.5), 
             hosp.FU.times.q1 = quantile(hosp.FU.times, probs = 0.25), hosp.FU.times.q3 = quantile(hosp.FU.times, probs = 0.75),
             hosp.FU.days.median = quantile(hosp.FU.days, probs = 0.5), 
@@ -159,7 +179,39 @@ desc <- data %>%
             hosp.FU.AUD.times.q1 = quantile(hosp.FU.AUD.times, probs = 0.25), hosp.FU.AUD.times.q3 = quantile(hosp.FU.AUD.times, probs = 0.75),
             hosp.FU.AUD.days.median = quantile(hosp.FU.AUD.days, probs = 0.5), 
             hosp.FU.AUD.days.q1 = quantile(hosp.FU.AUD.days, probs = 0.25), hosp.FU.AUD.days.q3 = quantile(hosp.FU.AUD.days, probs = 0.75)) %>%
-  t %>% as.data.frame() %>% row_to_names(1) %>% `colnames<-`(c("QWT", "INPAT", "Reha"))
+  t %>% as.data.frame() %>% row_to_names(1) %>% `colnames<-`(c("INPAT", "QWT", "Reha"))
+
+##  TABLE A1 (weighted)
+
+wdesc <- data %>%
+  group_by(treat) %>%
+  summarise(age.aud.mean = wtd.mean(age.aud, weights), age.aud.std = sqrt(wtd.var(age.aud, weights)),
+            sex.prop = wtd.mean(sex, weights), sex.lci = wtd.lci(sex, weights, "binomial"), sex.uci = wtd.uci(sex, weights, "binomial"),
+            employed.prop = wtd.mean(emp.employed, weights), employed.lci = wtd.lci(emp.employed, weights, "binomial"), employed.uci = wtd.uci(emp.employed, weights, "binomial"),
+            unemployed.prop = wtd.mean(emp.unemployed, weights), unemployed.lci = wtd.lci(emp.unemployed, weights, "binomial"), unemployed.uci = wtd.uci(emp.unemployed, weights, "binomial"),
+            emp.oth.prop = wtd.mean(emp.other, weights), emp.oth.lci = wtd.lci(emp.other, weights, "binomial"), emp.oth.uci = wtd.uci(emp.other, weights, "binomial"),
+            aud2017.prop = wtd.mean(aud2017, weights), aud2017.lci = wtd.lci(aud2017, weights, "binomial"), aud2017.uci = wtd.uci(aud2017, weights, "binomial"),
+            aud2018.prop = wtd.mean(aud2018, weights), aud2018.lci = wtd.lci(aud2018, weights, "binomial"), aud2018.uci = wtd.uci(aud2018, weights, "binomial"),
+            aud2019.prop = wtd.mean(aud2019, weights), aud2019.lci = wtd.lci(aud2019, weights, "binomial"), aud2019.uci = wtd.uci(aud2019, weights, "binomial"),
+            aud2020.prop = wtd.mean(aud2020, weights), aud2020.lci = wtd.lci(aud2020, weights, "binomial"), aud2020.uci = wtd.uci(aud2020, weights, "binomial"),
+            Elix30PRE.median = wtd.quantile(Elix30PRE, weights, probs = 0.5), 
+            Elix30PRE.q1 = wtd.quantile(Elix30PRE, weights, probs = 0.25), Elix30PRE.q3 = wtd.quantile(Elix30PRE, weights, probs = 0.75),
+            time.aud.treat.median = wtd.quantile(time.aud.treat, weights, probs = 0.5), 
+            time.aud.treat.q1 = wtd.quantile(time.aud.treat, weights, probs = 0.25), time.aud.treat.q3 = wtd.quantile(time.aud.treat, weights, probs = 0.75),
+            time.qwt.median = wtd.quantile(time.qwt, weights, probs = 0.5), 
+            time.qwt.q1 = wtd.quantile(time.qwt, weights, probs = 0.25), time.qwt.q3 = wtd.quantile(time.qwt, weights, probs = 0.75),
+            time.treat.median = wtd.quantile(time.treat, weights, probs = 0.5), 
+            time.treat.q1 = wtd.quantile(time.treat, weights, probs = 0.25), time.treat.q3 = wtd.quantile(time.treat, weights, probs = 0.75),
+            inpat.prop = wtd.mean(inpat2, weights), inpat.lci = wtd.lci(inpat2, weights, "binomial"), inpat.uci = wtd.uci(inpat2, weights, "binomial"),
+            hosp.FU.times.median = wtd.quantile(hosp.FU.times, weights, probs = 0.5), 
+            hosp.FU.times.q1 = wtd.quantile(hosp.FU.times, weights, probs = 0.25), hosp.FU.times.q3 = wtd.quantile(hosp.FU.times, weights, probs = 0.75),
+            hosp.FU.days.median = wtd.quantile(hosp.FU.days, weights, probs = 0.5), 
+            hosp.FU.days.q1 = wtd.quantile(hosp.FU.days, weights, probs = 0.25), hosp.FU.days.q3 = wtd.quantile(hosp.FU.days, weights, probs = 0.75),
+            hosp.FU.AUD.times.median = wtd.quantile(hosp.FU.AUD.times, weights, probs = 0.5), 
+            hosp.FU.AUD.times.q1 = wtd.quantile(hosp.FU.AUD.times, weights, probs = 0.25), hosp.FU.AUD.times.q3 = wtd.quantile(hosp.FU.AUD.times, weights, probs = 0.75),
+            hosp.FU.AUD.days.median = wtd.quantile(hosp.FU.AUD.days, weights, probs = 0.5), 
+            hosp.FU.AUD.days.q1 = wtd.quantile(hosp.FU.AUD.days, weights, probs = 0.25), hosp.FU.AUD.days.q3 = wtd.quantile(hosp.FU.AUD.days, weights, probs = 0.75)) %>%
+  t %>% as.data.frame() %>% row_to_names(1) %>% `colnames<-`(c("INPAT", "QWT", "Reha"))
 
 # Output Table 1, Table S1
 #write.csv(wdesc, paste0("Output/Leitliniengerechte Versorgung/", Sys.Date(), "_Tab1_weighted.csv"))

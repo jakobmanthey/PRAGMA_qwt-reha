@@ -3,7 +3,7 @@
 # ==================================================================================================================================================================
 
 # PROJECT TITLE:  PRAGMA - RQ3
-# CODE AUTHOR:    Jakob Manthe / Carolin Kilian
+# CODE AUTHOR:    Jakob Manthey / Carolin Kilian
 # DATE STARTED:   09/02/2024
 # LAST MODIFIED:  01/10/2024
 
@@ -19,10 +19,12 @@ rm(list=ls())
 
 # input path
 #inpath <- paste0("C:/Data.work/PRAGMA/Daten/PRAGMA_input/output/")
-inpath <- paste0("/Users/carolinkilian/Desktop/Pragma/Data/preprocessed data/")
+#inpath <- paste0("/Users/carolinkilian/Desktop/Pragma/Data/preprocessed data/")
+inpath <- paste0("/Data/preprocessed data/")
 
 # output path
-outpath <- paste0("/Users/carolinkilian/Desktop/Pragma/Data/raw data/")
+#outpath <- paste0("/Users/carolinkilian/Desktop/Pragma/Data/raw data/")
+outpath <- paste0("Data/raw data/")
 
 # load libraries
 library( data.table )
